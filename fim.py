@@ -4,19 +4,18 @@ import time
 import logging
 import requests
 import os
+import smtplib
+from email.message import EmailMessage
 from pathlib import Path
 from datetime import datetime
 from requests.auth import HTTPBasicAuth
 from dotenv import load_dotenv
 
-# =====================================================
 # LOAD ENV VARIABLES
-# =====================================================
+
 load_dotenv()
 
-# =====================================================
 # CONFIGURATION
-# =====================================================
 FILES_FOLDER = Path("files")
 BASELINE_FILE = Path("baseline.json")
 LOG_FILE = Path("fim.log")
@@ -30,9 +29,15 @@ JIRA_PROJECT_KEY = os.getenv("JIRA_PROJECT_KEY")
 ISSUE_TYPE = os.getenv("JIRA_ISSUE_TYPE")
 PRIORITY = os.getenv("JIRA_PRIORITY")
 
-# =====================================================
+# Email (from .env)
+EMAIL_ENABLED = os.getenv("EMAIL_ENABLED", "false").lower() == "true"
+SMTP_SERVER = os.getenv("SMTP_SERVER")
+SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+SMTP_EMAIL = os.getenv("SMTP_EMAIL")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+ALERT_RECEIVER = os.getenv("ALERT_RECEIVER")
+
 # LOGGING CONFIGURATION (Console + File)
-# =====================================================
 LOG_FILE.parent.mkdir(exist_ok=True)
 
 logger = logging.getLogger("FIM")
@@ -54,9 +59,7 @@ if not logger.handlers:
     logger.addHandler(console_handler)
     logger.addHandler(file_handler)
 
-# =====================================================
 # HASH FUNCTION
-# =====================================================
 def calculate_hash(file_path: Path) -> str:
     hasher = hashlib.sha256()
     with open(file_path, "rb") as f:
@@ -64,9 +67,7 @@ def calculate_hash(file_path: Path) -> str:
             hasher.update(chunk)
     return hasher.hexdigest()
 
-# =====================================================
 # BASELINE FUNCTIONS
-# =====================================================
 def create_baseline():
     baseline = {}
     for file in FILES_FOLDER.glob("*"):
@@ -81,10 +82,43 @@ def create_baseline():
 def load_baseline():
     with open(BASELINE_FILE, "r") as f:
         return json.load(f)
+    
 
-# =====================================================
+# EMAIL ALERT FUNCTION (NEW)
+def send_email_alert(alert: dict):
+    if not EMAIL_ENABLED:
+        return
+
+    try:
+        msg = EmailMessage()
+        msg["From"] = SMTP_EMAIL
+        msg["To"] = ALERT_RECEIVER
+        msg["Subject"] = f"FIM ALERT: {alert['event']} - {alert['filename']}"
+
+        msg.set_content(
+            f"""
+File Integrity Monitoring Alert
+
+Event      : {alert['event']}
+File       : {alert['filename']}
+Old Hash   : {alert['old_hash']}
+New Hash   : {alert.get('new_hash', 'N/A')}
+Timestamp  : {alert['timestamp']}
+            """
+        )
+
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SMTP_EMAIL, SMTP_PASSWORD)
+            server.send_message(msg)
+
+        logger.warning("Email alert sent for %s", alert["filename"])
+
+    except Exception as e:
+        logger.error("Failed to send email alert: %s", str(e))
+
+
 # JIRA ISSUE CREATION
-# =====================================================
 def create_jira_issue(alert: dict):
     url = f"{JIRA_URL}/rest/api/3/issue"
     auth = HTTPBasicAuth(JIRA_EMAIL, JIRA_API_TOKEN)
@@ -130,9 +164,7 @@ def create_jira_issue(alert: dict):
             response.text
         )
 
-# =====================================================
 # MONITORING LOGIC
-# =====================================================
 def monitor():
     baseline = load_baseline()
     logger.info("FIM monitoring started")
@@ -158,6 +190,7 @@ def monitor():
                     }
                     logger.critical("File modified: %s", filename)
                     create_jira_issue(alert)
+                    send_email_alert(alert) 
 
         # 2. FILE DELETED
         for filename in baseline:
@@ -171,6 +204,7 @@ def monitor():
                 }
                 logger.critical("File deleted: %s", filename)
                 create_jira_issue(alert)
+                send_email_alert(alert) 
 
         # 3. FILE CREATED
         for filename, new_hash in current_files.items():
@@ -184,12 +218,11 @@ def monitor():
                 }
                 logger.critical("New file created: %s", filename)
                 create_jira_issue(alert)
+                send_email_alert(alert) 
 
         time.sleep(INTERVAL)
 
-# =====================================================
 # MAIN
-# =====================================================
 if __name__ == "__main__":
     FILES_FOLDER.mkdir(exist_ok=True)
 
