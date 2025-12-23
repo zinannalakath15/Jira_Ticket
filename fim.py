@@ -11,8 +11,7 @@ from datetime import datetime
 from requests.auth import HTTPBasicAuth
 from dotenv import load_dotenv
 
-# LOAD ENV VARIABLES
-
+# LOAD ENV 
 load_dotenv()
 
 # CONFIGURATION
@@ -67,7 +66,7 @@ def calculate_hash(file_path: Path) -> str:
             hasher.update(chunk)
     return hasher.hexdigest()
 
-# BASELINE FUNCTIONS
+# BASELINE FUNCTION
 def create_baseline():
     baseline = {}
     for file in FILES_FOLDER.glob("*"):
@@ -84,7 +83,7 @@ def load_baseline():
         return json.load(f)
     
 
-# EMAIL ALERT FUNCTION (NEW)
+# EMAIL ALERT 
 def send_email_alert(alert: dict):
     if not EMAIL_ENABLED:
         return
@@ -118,7 +117,7 @@ Timestamp  : {alert['timestamp']}
         logger.error("Failed to send email alert: %s", str(e))
 
 
-# JIRA ISSUE CREATION
+# JIRA CREATION
 def create_jira_issue(alert: dict):
     url = f"{JIRA_URL}/rest/api/3/issue"
     auth = HTTPBasicAuth(JIRA_EMAIL, JIRA_API_TOKEN)
@@ -164,7 +163,7 @@ def create_jira_issue(alert: dict):
             response.text
         )
 
-# MONITORING LOGIC
+# MONITORING 
 def monitor():
     baseline = load_baseline()
     logger.info("FIM monitoring started")
@@ -177,7 +176,7 @@ def monitor():
             if file.is_file():
                 current_files[file.name] = calculate_hash(file)
 
-        # 1. FILE MODIFIED
+        # 1. Modified
         for filename, old_hash in baseline.items():
             if filename in current_files:
                 if current_files[filename] != old_hash:
@@ -192,7 +191,7 @@ def monitor():
                     create_jira_issue(alert)
                     send_email_alert(alert) 
 
-        # 2. FILE DELETED
+        # 2. Deleted
         for filename in baseline:
             if filename not in current_files:
                 alert = {
@@ -206,7 +205,7 @@ def monitor():
                 create_jira_issue(alert)
                 send_email_alert(alert) 
 
-        # 3. FILE CREATED
+        # 3. Created
         for filename, new_hash in current_files.items():
             if filename not in baseline:
                 alert = {
@@ -222,7 +221,7 @@ def monitor():
 
         time.sleep(INTERVAL)
 
-# MAIN
+# Main
 if __name__ == "__main__":
     FILES_FOLDER.mkdir(exist_ok=True)
 
